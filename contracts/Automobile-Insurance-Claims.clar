@@ -3,28 +3,28 @@
 
 ;; Data maps
 (define-map policies
-  { policy-id: (string-utf8 20) }
+  { policy-id: (string-ascii 20) }
   {
     owner: principal,
-    vehicle-vin: (string-utf8 17),
-    coverage-type: (string-utf8 50),
+    vehicle-vin: (string-ascii 17),
+    coverage-type: (string-ascii 50),
     coverage-limit: uint,
     deductible: uint,
     start-date: uint,
     end-date: uint,
-    status: (string-utf8 10)
+    status: (string-ascii 10)
   }
 )
 
 (define-map claims
-  { claim-id: (string-utf8 20) }
+  { claim-id: (string-ascii 20) }
   {
-    policy-id: (string-utf8 20),
+    policy-id: (string-ascii 20),
     claimant: principal,
     incident-date: uint,
-    description: (string-utf8 500),
+    description: (string-ascii 500),
     amount: uint,
-    status: (string-utf8 20),
+    status: (string-ascii 20),
     evidence-hash: (buff 32),
     adjuster: (optional principal),
     resolution-date: (optional uint)
@@ -34,7 +34,7 @@
 (define-map insurers
   { insurer: principal }
   {
-    name: (string-utf8 100),
+    name: (string-ascii 100),
     active: bool,
     registration-date: uint
   }
@@ -63,45 +63,62 @@
 (define-constant ERR-CLAIM-NOT-FOUND (err u106))
 (define-constant ERR-INVALID-STATUS (err u107))
 (define-constant ERR-POLICY-EXPIRED (err u108))
+(define-constant ERR-INVALID-INPUT (err u109))
+(define-constant ERR-INVALID-DATE (err u110))
+
+;; Validation helper functions
+(define-private (validate-string-not-empty (input (string-ascii 500)))
+  (not (is-eq input ""))
+)
+
+(define-private (validate-date (date uint))
+  (< u0 date)
+)
+
+(define-private (validate-amount (amount uint))
+  (< u0 amount)
+)
 
 ;; Admin functions
 (define-public (set-admin (new-admin principal))
   (begin
     (asserts! (is-eq tx-sender (var-get admin)) ERR-NOT-AUTHORIZED)
+    ;; No additional validation needed for principal type
     (ok (var-set admin new-admin))
   )
 )
 
-;; Insurer registration
-(define-public (register-insurer (name (string-utf8 100)))
+;; Insurer registration with timestamp parameter
+(define-public (register-insurer (name (string-ascii 100)) (timestamp uint))
   (begin
     (asserts! (is-eq tx-sender (var-get admin)) ERR-NOT-AUTHORIZED)
-    (let ((current-time (get-block-height)))
-      (map-set insurers
-        { insurer: tx-sender }
-        {
-          name: name,
-          active: true,
-          registration-date: current-time
-        }
-      )
-      (ok true)
+    (asserts! (validate-string-not-empty name) ERR-INVALID-INPUT)
+    (asserts! (validate-date timestamp) ERR-INVALID-DATE)
+    
+    (map-set insurers
+      { insurer: tx-sender }
+      {
+        name: name,
+        active: true,
+        registration-date: timestamp
+      }
     )
+    (ok true)
   )
 )
 
-;; Adjuster registration
-(define-public (register-adjuster (adjuster principal))
+;; Adjuster registration with timestamp parameter
+(define-public (register-adjuster (adjuster principal) (timestamp uint))
   (let (
     (insurer (unwrap! (map-get? insurers { insurer: tx-sender }) ERR-NOT-INSURER))
-    (current-time (get-block-height))
   )
+    (asserts! (validate-date timestamp) ERR-INVALID-DATE)
     (map-set adjusters
       { adjuster: adjuster }
       {
         insurer: tx-sender,
         active: true,
-        registration-date: current-time
+        registration-date: timestamp
       }
     )
     (ok true)
@@ -110,15 +127,22 @@
 
 ;; Policy creation
 (define-public (create-policy
-    (policy-id (string-utf8 20))
-    (vehicle-vin (string-utf8 17))
-    (coverage-type (string-utf8 50))
+    (policy-id (string-ascii 20))
+    (vehicle-vin (string-ascii 17))
+    (coverage-type (string-ascii 50))
     (coverage-limit uint)
     (deductible uint)
     (start-date uint)
     (end-date uint)
   )
   (let ((insurer (unwrap! (map-get? insurers { insurer: tx-sender }) ERR-NOT-INSURER)))
+    (asserts! (validate-string-not-empty policy-id) ERR-INVALID-INPUT)
+    (asserts! (validate-string-not-empty vehicle-vin) ERR-INVALID-INPUT)
+    (asserts! (validate-string-not-empty coverage-type) ERR-INVALID-INPUT)
+    (asserts! (validate-amount coverage-limit) ERR-INVALID-INPUT)
+    (asserts! (validate-date start-date) ERR-INVALID-DATE)
+    (asserts! (validate-date end-date) ERR-INVALID-DATE)
+    (asserts! (< start-date end-date) ERR-INVALID-DATE)
     (asserts! (is-none (map-get? policies { policy-id: policy-id })) ERR-POLICY-EXISTS)
     
     (map-set policies
@@ -141,17 +165,21 @@
 
 ;; File claim
 (define-public (file-claim
-    (policy-id (string-utf8 20))
+    (policy-id (string-ascii 20))
     (incident-date uint)
-    (description (string-utf8 500))
+    (description (string-ascii 500))
     (amount uint)
     (evidence-hash (buff 32))
+    (claim-id (string-ascii 20))
   )
   (let (
     (policy (unwrap! (map-get? policies { policy-id: policy-id }) ERR-POLICY-NOT-FOUND))
-    (current-time (get-block-height))
-    (claim-id (concat (to-string (var-get claim-counter)) "-claim"))
   )
+    (asserts! (validate-string-not-empty policy-id) ERR-INVALID-INPUT)
+    (asserts! (validate-string-not-empty claim-id) ERR-INVALID-INPUT)
+    (asserts! (validate-string-not-empty description) ERR-INVALID-INPUT)
+    (asserts! (validate-date incident-date) ERR-INVALID-DATE)
+    (asserts! (validate-amount amount) ERR-INVALID-INPUT)
     (asserts! (is-eq (get status policy) "active") ERR-INVALID-STATUS)
     (asserts! (<= (get start-date policy) incident-date) ERR-INVALID-STATUS)
     (asserts! (>= (get end-date policy) incident-date) ERR-POLICY-EXPIRED)
@@ -173,13 +201,13 @@
     
     (var-set claim-counter (+ (var-get claim-counter) u1))
     
-    (ok claim-id)
+    (ok true)
   )
 )
 
 ;; Assign adjuster
 (define-public (assign-adjuster
-    (claim-id (string-utf8 20))
+    (claim-id (string-ascii 20))
     (adjuster-principal principal)
   )
   (let (
@@ -187,6 +215,7 @@
     (policy (unwrap! (map-get? policies { policy-id: (get policy-id claim) }) ERR-POLICY-NOT-FOUND))
     (adjuster-info (unwrap! (map-get? adjusters { adjuster: adjuster-principal }) ERR-NOT-ADJUSTER))
   )
+    (asserts! (validate-string-not-empty claim-id) ERR-INVALID-INPUT)
     (asserts! (is-eq (get owner policy) tx-sender) ERR-NOT-AUTHORIZED)
     (asserts! (is-eq (get status claim) "pending") ERR-INVALID-STATUS)
     
@@ -202,26 +231,30 @@
   )
 )
 
-;; Process claim
+;; Process claim with timestamp parameter
 (define-public (process-claim
-    (claim-id (string-utf8 20))
+    (claim-id (string-ascii 20))
     (approved bool)
     (approved-amount uint)
+    (timestamp uint)
   )
   (let (
     (claim (unwrap! (map-get? claims { claim-id: claim-id }) ERR-CLAIM-NOT-FOUND))
     (adjuster-info (unwrap! (map-get? adjusters { adjuster: tx-sender }) ERR-NOT-ADJUSTER))
-    (current-time (get-block-height))
   )
+    (asserts! (validate-string-not-empty claim-id) ERR-INVALID-INPUT)
+    (asserts! (validate-date timestamp) ERR-INVALID-DATE)
+    (asserts! (validate-amount approved-amount) ERR-INVALID-INPUT)
     (asserts! (is-eq (get status claim) "reviewing") ERR-INVALID-STATUS)
-    (asserts! (is-eq (unwrap! (get adjuster claim) none) tx-sender) ERR-NOT-AUTHORIZED)
+    (asserts! (is-some (get adjuster claim)) ERR-NOT-AUTHORIZED)
+    (asserts! (is-eq (default-to tx-sender (get adjuster claim)) tx-sender) ERR-NOT-AUTHORIZED)
     
     (map-set claims
       { claim-id: claim-id }
       (merge claim { 
         status: (if approved "approved" "rejected"),
         amount: (if approved approved-amount (get amount claim)),
-        resolution-date: (some current-time)
+        resolution-date: (some timestamp)
       })
     )
     
@@ -230,11 +263,11 @@
 )
 
 ;; Read-only functions
-(define-read-only (get-policy (policy-id (string-utf8 20)))
+(define-read-only (get-policy (policy-id (string-ascii 20)))
   (map-get? policies { policy-id: policy-id })
 )
 
-(define-read-only (get-claim (claim-id (string-utf8 20)))
+(define-read-only (get-claim (claim-id (string-ascii 20)))
   (map-get? claims { claim-id: claim-id })
 )
 
