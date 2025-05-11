@@ -79,11 +79,21 @@
   (< u0 amount)
 )
 
+(define-private (validate-buff-not-empty (buffer (buff 32)))
+  (not (is-eq buffer 0x))
+)
+
+(define-private (validate-principal (user principal))
+  ;; Principals are already validated by the Clarity type system
+  ;; This is just a placeholder function to make the validation explicit
+  true
+)
+
 ;; Admin functions
 (define-public (set-admin (new-admin principal))
   (begin
     (asserts! (is-eq tx-sender (var-get admin)) ERR-NOT-AUTHORIZED)
-    ;; No additional validation needed for principal type
+    (asserts! (validate-principal new-admin) ERR-INVALID-INPUT)
     (ok (var-set admin new-admin))
   )
 )
@@ -112,6 +122,7 @@
   (let (
     (insurer (unwrap! (map-get? insurers { insurer: tx-sender }) ERR-NOT-INSURER))
   )
+    (asserts! (validate-principal adjuster) ERR-INVALID-INPUT)
     (asserts! (validate-date timestamp) ERR-INVALID-DATE)
     (map-set adjusters
       { adjuster: adjuster }
@@ -140,6 +151,7 @@
     (asserts! (validate-string-not-empty vehicle-vin) ERR-INVALID-INPUT)
     (asserts! (validate-string-not-empty coverage-type) ERR-INVALID-INPUT)
     (asserts! (validate-amount coverage-limit) ERR-INVALID-INPUT)
+    (asserts! (validate-amount deductible) ERR-INVALID-INPUT)
     (asserts! (validate-date start-date) ERR-INVALID-DATE)
     (asserts! (validate-date end-date) ERR-INVALID-DATE)
     (asserts! (< start-date end-date) ERR-INVALID-DATE)
@@ -180,6 +192,7 @@
     (asserts! (validate-string-not-empty description) ERR-INVALID-INPUT)
     (asserts! (validate-date incident-date) ERR-INVALID-DATE)
     (asserts! (validate-amount amount) ERR-INVALID-INPUT)
+    (asserts! (validate-buff-not-empty evidence-hash) ERR-INVALID-INPUT)
     (asserts! (is-eq (get status policy) "active") ERR-INVALID-STATUS)
     (asserts! (<= (get start-date policy) incident-date) ERR-INVALID-STATUS)
     (asserts! (>= (get end-date policy) incident-date) ERR-POLICY-EXPIRED)
@@ -216,6 +229,7 @@
     (adjuster-info (unwrap! (map-get? adjusters { adjuster: adjuster-principal }) ERR-NOT-ADJUSTER))
   )
     (asserts! (validate-string-not-empty claim-id) ERR-INVALID-INPUT)
+    (asserts! (validate-principal adjuster-principal) ERR-INVALID-INPUT)
     (asserts! (is-eq (get owner policy) tx-sender) ERR-NOT-AUTHORIZED)
     (asserts! (is-eq (get status claim) "pending") ERR-INVALID-STATUS)
     
